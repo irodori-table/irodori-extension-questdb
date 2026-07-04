@@ -320,7 +320,7 @@ dependencies = [
 
 [[package]]
 name = "irodori-extension-questdb"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64",
  "chrono",
