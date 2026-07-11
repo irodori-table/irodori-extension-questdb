@@ -1,21 +1,17 @@
 <!-- i18n: language-switcher -->
 [English](README.md) | [日本語](README.ja.md)
 
-# Native Source
+# ネイティブソース
 
-The initial source snapshot was copied from `db/postgres.rs` in the desktop app.
+初期のソーススナップショットは、デスクトップアプリの `db/postgres.rs` からコピーされました。
 
-Source SHA-256: `a1ef241ff26bbc84d50bc0888c01c280d09f4f058cb05a27f2dc974bd5adf7d9`.
+ソースSHA-256: `a1ef241ff26bbc84d50bc0888c01c280d09f4f058cb05a27f2dc974bd5adf7d9`。
 
+このディレクトリは `irodori.questdb` のマイグレーションステージングエリアです。アクティブなネイティブエントリポイントは `src/lib.rs` にあり、エンジンの動作は `src/driver.rs` にあります。エンジン固有の接続/クエリ/メタデータコードは、これらのスナップショットから動作モジュールに移動すべきであり、コネクタのランタイム契約がデスクトップアプリに組み込まれています。
 
-This directory is a migration staging area for `irodori.questdb`. The active native
-entrypoints live in `src/lib.rs`, and engine behavior lives in `src/driver.rs`. Engine-specific
-connect/query/metadata code should move from these snapshots into that behavior
-module as the connector runtime contract is wired into the desktop app.
+## マイグレーションスナップショット
 
-## Migration Snapshots
-
-| Kind | Source | Destination | SHA-256 |
+| 種類 | ソース | 宛先 | SHA-256 |
 |---|---|---|---|
 | `desktop-db-adapter` | `apps/desktop/src-tauri/src/db/postgres.rs` | `native/source/irodori-table/apps/desktop/src-tauri/src/db/postgres.rs` | `a1ef241ff26bbc84d50bc0888c01c280d09f4f058cb05a27f2dc974bd5adf7d9` |
 | `desktop-db-contract` | `apps/desktop/src-tauri/src/db/connection.rs` | `native/source/irodori-table/apps/desktop/src-tauri/src/db/connection.rs` | `54051346e0402f182d87e2f0e7692d8fc50a8cedd7e1ba4b02b2abfa1f514a47` |
@@ -32,4 +28,4 @@ module as the connector runtime contract is wired into the desktop app.
 | `transport-runtime` | `../irodori-kit/irodori-proxy/src/plan.rs` | `native/source/irodori-kit/irodori-proxy/src/plan.rs` | `b6e3be9778fd9b543d905dec39c0ddf579e739313e0bf24881f6152b6da94a39` |
 | `transport-runtime` | `../irodori-kit/irodori-proxy/src/resolved.rs` | `native/source/irodori-kit/irodori-proxy/src/resolved.rs` | `4b1ba3f95e49fd582dd82de39452d03a597abe36a8738772e6f4bdbab753772d` |
 
-Engine status from `knowledge/engines.json`: `wired`.
+`knowledge/engines.json` からのエンジンステータス: `wired`。
