@@ -24,7 +24,7 @@ name = "irodori_extension_questdb"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-irodori-connector-abi = { git = "https://github.com/irodori-table/irodori-kit", tag = "v0.7.2" }
+irodori-connector-abi = { git = "https://github.com/hjosugi/irodori-kit", tag = "v0.7.2" }
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 native-tls = "0.2"
