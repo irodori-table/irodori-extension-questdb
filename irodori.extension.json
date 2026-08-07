@@ -7,7 +7,7 @@
   "publisher": "irodori",
   "description": "QuestDB Connector contributes the QuestDB database connector through the native connector ABI.",
   "license": "MIT OR 0BSD",
-  "repository": "https://github.com/hjosugi/irodori-extension-questdb",
+  "repository": "https://github.com/irodori-table/irodori-extension-questdb",
   "apiVersion": "0.1",
   "runtime": "native",
   "entry": "dist/native",

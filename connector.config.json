@@ -421,7 +421,7 @@
   },
   "source": {
     "marketplaceId": "irodori.questdb",
-    "repository": "https://github.com/hjosugi/irodori-extension-questdb",
+    "repository": "https://github.com/irodori-table/irodori-extension-questdb",
     "knowledgeEngineStatus": "wired",
     "adapter": "db/postgres.rs",
     "adapterSha256": "a1ef241ff26bbc84d50bc0888c01c280d09f4f058cb05a27f2dc974bd5adf7d9",
