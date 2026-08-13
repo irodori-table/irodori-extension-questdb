@@ -24,7 +24,99 @@ struct QuestDbConfig {
     conninfo: String,
     database: String,
     tls: bool,
+    client_tls: ClientTls,
     redaction_values: Vec<String>,
+}
+
+/// Transport security beyond "use TLS", as `connector.config.json` declares it
+/// under `clientCertificate`.
+///
+/// Paths, never key material: connector options persist to the workspace in the
+/// clear, so the profile carries a path and the driver reads the file at
+/// connect time.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+struct ClientTls {
+    root_cert_path: Option<String>,
+    client_cert_path: Option<String>,
+    client_key_path: Option<String>,
+}
+
+impl ClientTls {
+    fn from_request(request: &Value) -> Self {
+        Self {
+            root_cert_path: option_string(
+                request,
+                &["sslRootCert", "sslrootcert", "ssl-ca", "caCert"],
+            ),
+            client_cert_path: option_string(
+                request,
+                &["sslCert", "sslcert", "ssl-cert", "clientCert"],
+            ),
+            client_key_path: option_string(request, &["sslKey", "sslkey", "ssl-key", "clientKey"]),
+        }
+    }
+
+    fn is_configured(&self) -> bool {
+        self.root_cert_path.is_some()
+            || self.client_cert_path.is_some()
+            || self.client_key_path.is_some()
+    }
+
+    /// Apply the profile's certificates to a `native-tls` builder.
+    ///
+    /// `native-tls` takes the client identity as a PEM certificate and key
+    /// pair, which is what every other tool asks for, so the two files go
+    /// straight through.
+    fn apply(&self, builder: &mut native_tls::TlsConnectorBuilder) -> Result<(), String> {
+        if let Some(path) = &self.root_cert_path {
+            let pem = read_pem(path, "SSL root certificate")?;
+            let certificate = native_tls::Certificate::from_pem(&pem)
+                .map_err(|err| format!("SSL root certificate at {path} is not valid PEM: {err}"))?;
+            builder.add_root_certificate(certificate);
+        }
+        match (&self.client_cert_path, &self.client_key_path) {
+            (Some(cert_path), Some(key_path)) => {
+                let cert = read_pem(cert_path, "SSL client certificate")?;
+                let key = read_pem(key_path, "SSL client key")?;
+                require_pkcs8_key(&key, key_path)?;
+                let identity = native_tls::Identity::from_pkcs8(&cert, &key)
+                    .map_err(|err| format!("SSL client identity is not usable: {err}"))?;
+                builder.identity(identity);
+            }
+            (Some(_), None) => {
+                return Err("SSL client certificate needs a matching client key.".to_string())
+            }
+            (None, Some(_)) => {
+                return Err("SSL client key needs a matching client certificate.".to_string())
+            }
+            (None, None) => {}
+        }
+        Ok(())
+    }
+}
+
+fn read_pem(path: &str, label: &str) -> Result<Vec<u8>, String> {
+    std::fs::read(path).map_err(|err| format!("{label} at {path} could not be read: {err}"))
+}
+
+/// `native-tls` only accepts a PKCS#8 client key, and only says so on some
+/// platforms.
+///
+/// The Windows and macOS backends reject anything not starting with
+/// `-----BEGIN PRIVATE KEY-----`; the OpenSSL backend is more permissive. A key
+/// in the older PKCS#1 (`BEGIN RSA PRIVATE KEY`) or SEC1
+/// (`BEGIN EC PRIVATE KEY`) form therefore works on Linux and fails on a
+/// colleague's machine with a message that does not say why. Say why here, on
+/// every platform, and give the command that fixes it.
+fn require_pkcs8_key(key: &[u8], path: &str) -> Result<(), String> {
+    if key.starts_with(b"-----BEGIN PRIVATE KEY-----") {
+        return Ok(());
+    }
+    Err(format!(
+        "SSL client key at {path} must be in PKCS#8 PEM form \
+         (-----BEGIN PRIVATE KEY-----). Convert it with: \
+         openssl pkcs8 -topk8 -nocrypt -in {path} -out client.pk8.pem"
+    ))
 }
 
 #[derive(Default)]
@@ -227,6 +319,7 @@ impl QuestDbConfig {
             conninfo,
             database,
             tls: tls || conninfo_requests_tls(request),
+            client_tls: ClientTls::from_request(request),
             redaction_values,
         })
     }
@@ -246,8 +339,13 @@ impl QuestDbConfig {
 }
 
 fn connect_client(config: &QuestDbConfig) -> Result<Client, String> {
-    if config.tls {
-        let connector = TlsConnector::builder()
+    // Supplying a certificate is a request for TLS: the material is unusable
+    // over a plaintext connection, so honouring one without the other would
+    // connect in a weaker mode than the user configured.
+    if config.tls || config.client_tls.is_configured() {
+        let mut builder = TlsConnector::builder();
+        config.client_tls.apply(&mut builder)?;
+        let connector = builder
             .build()
             .map_err(|err| format!("TLS setup failed: {err}"))?;
         let connector = MakeTlsConnector::new(connector);
@@ -620,5 +718,109 @@ mod tests {
         assert_eq!(conninfo_value("simple"), "simple");
         assert_eq!(conninfo_value("has space"), "'has space'");
         assert_eq!(conninfo_value("has'quote"), "'has\\'quote'");
+    }
+
+    #[test]
+    fn reads_the_client_tls_paths_from_the_connector_options() {
+        let tls = ClientTls::from_request(&json!({
+            "profile": { "options": {
+                "sslRootCert": "/etc/ssl/ca.pem",
+                "sslCert": "/etc/ssl/client.pem",
+                "sslKey": "/etc/ssl/client.key"
+            } }
+        }));
+        assert_eq!(tls.root_cert_path.as_deref(), Some("/etc/ssl/ca.pem"));
+        assert_eq!(tls.client_cert_path.as_deref(), Some("/etc/ssl/client.pem"));
+        assert_eq!(tls.client_key_path.as_deref(), Some("/etc/ssl/client.key"));
+        assert!(tls.is_configured());
+    }
+
+    #[test]
+    fn accepts_the_driver_spellings_too() {
+        let tls = ClientTls::from_request(&json!({
+            "profile": { "options": { "sslrootcert": "/ca.pem", "ssl-cert": "/c.pem" } }
+        }));
+        assert_eq!(tls.root_cert_path.as_deref(), Some("/ca.pem"));
+        assert_eq!(tls.client_cert_path.as_deref(), Some("/c.pem"));
+    }
+
+    #[test]
+    fn a_profile_without_certificates_is_not_configured() {
+        let tls = ClientTls::from_request(&json!({ "profile": {} }));
+        assert_eq!(tls, ClientTls::default());
+        assert!(!tls.is_configured());
+        let mut builder = native_tls::TlsConnector::builder();
+        assert!(tls.apply(&mut builder).is_ok());
+    }
+
+    #[test]
+    fn half_a_client_identity_is_rejected() {
+        // Connecting without the certificate the user asked for is worse than
+        // refusing: it succeeds in a weaker mode than they configured.
+        let mut builder = native_tls::TlsConnector::builder();
+        let cert_only = ClientTls {
+            client_cert_path: Some("/etc/ssl/client.pem".into()),
+            ..ClientTls::default()
+        };
+        assert_eq!(
+            cert_only.apply(&mut builder).unwrap_err(),
+            "SSL client certificate needs a matching client key."
+        );
+
+        let key_only = ClientTls {
+            client_key_path: Some("/etc/ssl/client.key".into()),
+            ..ClientTls::default()
+        };
+        assert_eq!(
+            key_only.apply(&mut builder).unwrap_err(),
+            "SSL client key needs a matching client certificate."
+        );
+    }
+
+    #[test]
+    fn an_unreadable_certificate_names_the_file_and_the_field() {
+        let mut builder = native_tls::TlsConnector::builder();
+        let tls = ClientTls {
+            root_cert_path: Some("/definitely/not/here.pem".into()),
+            ..ClientTls::default()
+        };
+        let err = tls.apply(&mut builder).unwrap_err();
+        assert!(
+            err.starts_with("SSL root certificate at /definitely/not/here.pem"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_certificate_that_is_not_pem_is_rejected() {
+        let dir = std::env::temp_dir().join("irodori-questdb-tls-test");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("not-a-cert.pem");
+        std::fs::write(&path, b"this is not a certificate").unwrap();
+
+        let mut builder = native_tls::TlsConnector::builder();
+        let tls = ClientTls {
+            root_cert_path: Some(path.to_string_lossy().into_owned()),
+            ..ClientTls::default()
+        };
+        assert!(tls.apply(&mut builder).is_err());
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn a_pkcs1_client_key_is_rejected_with_the_conversion_command() {
+        // native-tls accepts only PKCS#8, and only the Windows and macOS
+        // backends say so — on Linux an older key shape fails later and less
+        // clearly, or not at all until a colleague tries it.
+        let err = require_pkcs8_key(
+            b"-----BEGIN RSA PRIVATE KEY-----\nMII...\n-----END RSA PRIVATE KEY-----\n",
+            "/etc/ssl/client.key",
+        )
+        .unwrap_err();
+        assert!(err.contains("PKCS#8"), "{err}");
+        assert!(err.contains("openssl pkcs8 -topk8"), "{err}");
+
+        assert!(require_pkcs8_key(b"-----BEGIN PRIVATE KEY-----\nMII...\n", "/k").is_ok());
     }
 }
