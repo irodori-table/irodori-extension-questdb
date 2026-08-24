@@ -70,15 +70,15 @@ impl ClientTls {
     /// straight through.
     fn apply(&self, builder: &mut native_tls::TlsConnectorBuilder) -> Result<(), String> {
         if let Some(path) = &self.root_cert_path {
-            let pem = read_pem(path, "SSL root certificate")?;
+            let pem = abi::read_pem(path, "SSL root certificate")?;
             let certificate = native_tls::Certificate::from_pem(&pem)
                 .map_err(|err| format!("SSL root certificate at {path} is not valid PEM: {err}"))?;
             builder.add_root_certificate(certificate);
         }
         match (&self.client_cert_path, &self.client_key_path) {
             (Some(cert_path), Some(key_path)) => {
-                let cert = read_pem(cert_path, "SSL client certificate")?;
-                let key = read_pem(key_path, "SSL client key")?;
+                let cert = abi::read_pem(cert_path, "SSL client certificate")?;
+                let key = abi::read_pem(key_path, "SSL client key")?;
                 require_pkcs8_key(&key, key_path)?;
                 let identity = native_tls::Identity::from_pkcs8(&cert, &key)
                     .map_err(|err| format!("SSL client identity is not usable: {err}"))?;
@@ -94,10 +94,6 @@ impl ClientTls {
         }
         Ok(())
     }
-}
-
-fn read_pem(path: &str, label: &str) -> Result<Vec<u8>, String> {
-    std::fs::read(path).map_err(|err| format!("{label} at {path} could not be read: {err}"))
 }
 
 /// `native-tls` only accepts a PKCS#8 client key, and only says so on some
@@ -326,15 +322,11 @@ impl QuestDbConfig {
     }
 
     fn redact(&self, message: &str) -> String {
-        self.redaction_values.iter().fold(
-            message.replace(&self.conninfo, "<questdb-conninfo>"),
-            |message, secret| {
-                if secret.is_empty() {
-                    message
-                } else {
-                    message.replace(secret, "****")
-                }
-            },
+        abi::redact_endpoint(
+            message,
+            &self.conninfo,
+            "<questdb-conninfo>",
+            &self.redaction_values,
         )
     }
 }
